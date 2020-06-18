@@ -1,1 +1,7 @@
-
+.DS_Store
+*.DS_Store
+outputs/
+*.pt
+datasets/
+.vscode/
+__pycache__/
