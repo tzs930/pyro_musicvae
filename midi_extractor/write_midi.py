@@ -72,14 +72,28 @@ def write_midi(pr, ticks_per_beat, write_path, tempo=80):
                     time = 0
                 track.append(mido.Message('note_on', note=pitch, velocity=velocity, time=time))
                 notes_on_list.append(pitch)
+                
     mid.save(write_path)
     return
 
-def np_to_midi(name, tpb=8, tmp=80):
-    pr = np.load(name + ".npy", allow_pickle=True)
-    pr_dict = {"piano" : np.squeeze(pr)}
+def np_to_midi(name, tpb=4, tmp=80):
+    prs = np.load(name + '.npy', allow_pickle=True)
+    
+    prs = np.array(np.round(prs, decimals=0), dtype=int)
+    prs = np.squeeze(prs)
+    prs = (prs / prs.max()) * 97
+    print(prs)
+    prs = np.array(prs // (128//16) * (128//16))
+    prs = prs[:,:,:88]
+    pr = np.vstack(prs)
+    # pr = prs[0]
+    # pr : [sequence_len, pitch_dim] :0~127
+    # pr = np.vstack(prs[:,:5])
 
+    pr_dict = {"piano" : np.squeeze(pr)}
 
     write_midi(pr_dict, tpb, name + ".mid", tempo=tmp)
 
-np_to_midi("beethoven64_test")
+load_path = 'outputs/Mozart_64_IWAE_num_particle_8/generated_samples'
+# load_path = 'datasets/beethoven64_test.npy'
+np_to_midi(load_path)

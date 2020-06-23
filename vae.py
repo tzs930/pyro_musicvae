@@ -18,6 +18,7 @@ from pyro.infer import SVI, Trace_ELBO
 from pyro.optim import Adam
 from pyro import poutine
 from iwae import Trace_IWAE
+import wandb
 
 from torch.utils.data import TensorDataset, DataLoader, Dataset
 
@@ -35,33 +36,34 @@ class CondDataset(Dataset):
     def __init__(self, *tensors):        
         # temp_tensor = tensors[0].reshape(-1, MAX_SEQ_LEN*2, PITCH_DIM)
         temp_tensor = tensors[0]
+        # [DATA_SIZE, MAX_SEQ_LEN*2, PITCH_DIM]
         self.cond_tensors = temp_tensor[:,:MAX_SEQ_LEN,:].reshape(-1, MAX_SEQ_LEN*PITCH_DIM)
         self.tensors = temp_tensor[:,MAX_SEQ_LEN:,:].reshape(-1, MAX_SEQ_LEN*PITCH_DIM)
+        self.length = len(self.tensors)
 
     def __getitem__(self, idx):
         x = self.tensors[idx]
+            
         cond = self.cond_tensors[idx]
         sample = {'x': x, 'cond': cond}
 
         return sample
 
     def __len__(self):
-        return self.tensors[0].size(0)
+        return self.length
 
 def setup_data_loaders(train_data_path, test_data_path, batch_size=16, use_cuda=False):
+    device = 'cuda' if use_cuda else 'cpu'
     train_data = torch.tensor(
-        np.load(train_data_path) / MAX_VEL + EPS, 
-        dtype=torch.float)
-
+        np.load(train_data_path) / MAX_VEL, 
+        dtype=torch.float, device=device)
     train_data = torch.clamp(train_data, min=0., max=1.)
-    # train_data = train_data.view(-1, MAX_SEQ_LEN*2*PITCH_DIM)
     train_set = CondDataset(train_data)
 
     test_data = torch.tensor(
-        np.load(test_data_path) / MAX_VEL + EPS, 
-        dtype=torch.float)
-    # test_data = test_data.view(-1, MAX_SEQ_LEN*2*PITCH_DIM)
-    train_data = torch.clamp(test_data, min=0., max=1.)
+        np.load(test_data_path) / MAX_VEL, 
+        dtype=torch.float, device=device)
+    test_data = torch.clamp(test_data, min=0., max=1.)
     test_set = CondDataset(test_data)
 
     kwargs = {'num_workers': 1, 'pin_memory': use_cuda}
@@ -281,31 +283,34 @@ def evaluate(svi, test_loader, use_cuda=False):
 #     warn_if_nan(loss, "loss")
 #     return loss
 
-def main(args):
+def main(artist_name, args):
     # clear param store
     pyro.clear_param_store()
     pyro.enable_validation(True)
     pyro.distributions.enable_validation(False)
     pyro.set_rng_seed(0)
+    # wandb.init(project="vae_midi", name="%s (num_particles=%d) [%s]"%(args.model_name, args.num_particles, artist_name))
 
     # setup MNIST data loaders
     # train_loader, test_loader
-    train_loader, test_loader = setup_data_loaders(args.train_data_path, args.test_data_path, batch_size=16, use_cuda=args.cuda)
+    train_loader, test_loader = setup_data_loaders(args.train_data_path, args.test_data_path, batch_size=32, use_cuda=args.cuda)
 
     if not os.path.exists(args.output_path):
         os.makedirs(args.output_path)
 
     # setup the VAE
     vae = VAE(use_cuda=args.cuda)
+    # wandb.watch(vae)
+
     # setup the optimizer
     adam_args = {"lr": args.learning_rate}
     optimizer = Adam(adam_args)
 
     # setup the inference algorithm
-    if args.model_name == 'vae':
-        loss = Trace_ELBO(num_particles=4)
-    elif args.model_name == 'iwae':
-        loss = Trace_IWAE(num_particles=4)
+    if args.model_name == 'VAE':
+        loss = Trace_ELBO(num_particles=args.num_particles)
+    elif args.model_name == 'IWAE':
+        loss = Trace_IWAE(num_particles=args.num_particles)
 
     svi = SVI(vae.model, vae.guide, optimizer, loss=loss)
             
@@ -315,14 +320,17 @@ def main(args):
     # training loop
 
     for epoch in range(args.num_epochs):
-        total_epoch_loss_train = train(svi, train_loader, use_cuda=args.cuda)
+        total_epoch_loss_train = train(svi, train_loader, use_cuda=args.cuda)        
         train_elbo.append(-total_epoch_loss_train)
+        # wandb.log({"Train ELBO": -total_epoch_loss_train})
         print("[epoch %03d]  average training loss: %.4f" % (epoch, total_epoch_loss_train))
 
         if epoch % args.test_frequency == 0:
             # report test diagnostics
             total_epoch_loss_test = evaluate(svi, test_loader, use_cuda=args.cuda)
             test_elbo.append(-total_epoch_loss_test)
+            # wandb.log({"Test ELBO": -total_epoch_loss_test})
+
             print("[epoch %03d] average test loss: %.4f" % (epoch, total_epoch_loss_test))
 
             if total_epoch_loss_test < min_valid_loss:
@@ -343,7 +351,6 @@ def main(args):
     np.save(args.output_path + 'train_elbo.npy', train_elbo_)
     np.save(args.output_path + 'test_elbo.npy', test_elbo_)
     
-    
     return vae
 
 
@@ -351,19 +358,21 @@ def main(args):
 if __name__ == '__main__':
     assert pyro.__version__.startswith('1.3.1')
     # parse command line arguments
+    artist_name = 'maestro'
+
     parser = argparse.ArgumentParser(description="parse args")
-    parser.add_argument('--train_data_path', default='datasets/Mozart_64_conditioned_test.npy', type=str)
-    parser.add_argument('--test_data_path', default='datasets/Mozart_64_conditioned_test.npy', type=str)
-    parser.add_argument('--output_path', default='outputs/Mozart_64', type=str)   
-    parser.add_argument('--model_name', default='iwae')
+    parser.add_argument('--train_data_path', default='datasets/%s_64_conditioned_new_train.npy'%artist_name, type=str)
+    parser.add_argument('--test_data_path', default='datasets/%s_64_conditioned_new_test.npy'%artist_name, type=str)
+    parser.add_argument('--output_path', default='outputs/%s_64'%artist_name, type=str)   
+    parser.add_argument('--model_name', default='VAE')
     parser.add_argument('--num_particles', default=4, type=int, help='number of particles')
     parser.add_argument('-n', '--num-epochs', default=301, type=int, help='number of training epochs')
     parser.add_argument('-tf', '--test-frequency', default=5, type=int, help='how often we evaluate the test set')
-    parser.add_argument('-lr', '--learning-rate', default=3.0e-5, type=float, help='learning rate')
+    parser.add_argument('-lr', '--learning-rate', default=3.0e-6, type=float, help='learning rate')
     parser.add_argument('--cuda', action='store_true', default=True, help='whether to use cuda')
     parser.add_argument('-i-tsne', '--tsne_iter', default=100, type=int, help='epoch when tsne visualization runs')
     args = parser.parse_args()
     args.output_path += '_%s_num_particle_%d/' % (args.model_name, args.num_particles)
 
-    model = main(args)
+    model = main(artist_name, args)
     

@@ -172,13 +172,15 @@ import os
 import utils
 
 if __name__ == '__main__':    
-    artistlist = ["Beethoven", "Mozart", "Haydn", "Paganini"]
-    
+    artistlist = ["2004", "2006", "2008", "2009", "2011", "2013", "2014", "2015", "2017", "2018"]
+    is_demo = False
     # dirpath = "/Users/seokin/Workspace/midi_to_numpy/datasets/jazz"
     filepaths = []
     output_data = []
     start_seq_len = 0
     max_seq_len = 64    
+    demo_len = 20
+    quantization = 4
 
     START_TOKEN = 88
     END_TOKEN = 89
@@ -189,10 +191,9 @@ if __name__ == '__main__':
     pad_seq = [0]*90                                                  # [90,]
 
     i = 0
-    
+    outfilename = "datasets/maestro_%s_conditioned" % (max_seq_len)
     for artistname in artistlist:
-        dirpath = "midi_extractor/datasets/classic/" + artistname    
-        outfilename = "datasets/%s_%s_conditioned" % (artistname, max_seq_len)
+        dirpath = "midi_extractor/datasets/maestro-all/" + artistname    
         for filename in os.listdir(dirpath):
             print('Open %s ' % filename)
             if  '.mid' in filename and not ('._' in filename):
@@ -201,7 +202,7 @@ if __name__ == '__main__':
                 # with open(os.path.join(os.cwd(), filename), 'r') as f:
 
                 try:
-                    aaa = Read_midi(filepath, 16).read_file()
+                    aaa = Read_midi(filepath, quantization).read_file()
                 except:
                     print("Cannot read %s.. Skip!" % filepath)
                     continue
@@ -215,7 +216,7 @@ if __name__ == '__main__':
                 total_seq_len = len(bbb)
                 cur_seq_pos = start_seq_len
 
-                while cur_seq_pos < total_seq_len:
+                while cur_seq_pos < total_seq_len: # and (cur_seq_pos < max_seq_len * demo_len)
                     # [max_seq_len, 90]
                     bbb_fixed = bbb[cur_seq_pos:, 20:][:max_seq_len, :-18]
                     bbb_fixed[:, 88] *= 0
@@ -230,10 +231,12 @@ if __name__ == '__main__':
                     if next_cur_seq_pos <= total_seq_len:
                         # output_data[filename] = bbb_fixed.copy()
                         seq_with_condition = np.concatenate([prev_seq.copy(), bbb_fixed.copy()], axis=0)
-                        output_data.append(seq_with_condition)
+                        if seq_with_condition.max() != 0:
+                            i += 1
+                            output_data.append(seq_with_condition)
+                            print("- %04d Load (%d,%d) from file : %s"%(i+1, seq_with_condition.shape[0], seq_with_condition.shape[1], filename))
+                        
                         prev_seq = bbb_fixed
-                        print("- %04d Load (%d,%d) from file : %s"%(i+1, seq_with_condition.shape[0], seq_with_condition.shape[1], filename))
-                        i += 1
                 
                     else:
                         bbb_fixed = bbb[cur_seq_pos:, 20:][:, :-18]
@@ -243,8 +246,10 @@ if __name__ == '__main__':
                         padding_mat = np.matrix((max_seq_len - (total_seq_len - cur_seq_pos)) * [pad_seq])
                         bbb_fixed = np.concatenate([bbb_fixed, padding_mat], axis=0)
                         seq_with_condition = np.concatenate([prev_seq.copy(), bbb_fixed.copy()], axis=0)                    
-                        output_data.append(seq_with_condition)
-                        print("- %04d Load (%d,%d) from file : %s"%(i+1, seq_with_condition.shape[0], seq_with_condition.shape[1], filename))
+
+                        if seq_with_condition.max() != 0:
+                            output_data.append(seq_with_condition)
+                            print("- %04d Load (%d,%d) from file : %s"%(i+1, seq_with_condition.shape[0], seq_with_condition.shape[1], filename))
 
                         seq_with_condition = np.concatenate([bbb_fixed.copy(), end_seq.copy()], axis=0)                    
                         output_data.append(seq_with_condition)
@@ -253,12 +258,19 @@ if __name__ == '__main__':
                         break
 
                     cur_seq_pos = next_cur_seq_pos
-            
-            idxs = np.arange(len(output_data))
-            train_idxs = np.random.choice(idxs, size=int(len(output_data)*0.9), replace=False)
-            test_idxs = np.delete(idxs, train_idxs)
 
-            np.save(outfilename + '_train.npy', np.array(output_data)[train_idxs])
-            np.save(outfilename + '_test.npy', np.array(output_data)[test_idxs])
+                    # if is_demo:
+                    #     break
+
+    if not is_demo:
+        idxs = np.arange(len(output_data))
+        train_idxs = np.random.choice(idxs, size=int(len(output_data)*0.9), replace=False)
+        test_idxs = np.delete(idxs, train_idxs)
+
+        np.save(outfilename + '_new_train.npy', np.array(output_data)[train_idxs])
+        np.save(outfilename + '_new_test.npy', np.array(output_data)[test_idxs])
+
+    else:
+        np.save(outfilename + '.npy', np.array(output_data))
 
     # output : {"songname": np.matrix(max_seq_len, note)}

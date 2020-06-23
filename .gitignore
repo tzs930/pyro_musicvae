@@ -5,3 +5,7 @@ outputs/
 datasets/
 .vscode/
 __pycache__/
+*.mid
+wandb/
+*.npy
+.ipynb_checkpoints/

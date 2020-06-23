@@ -23,8 +23,8 @@ def dict_to_matrix(pianoroll):
     N_pr = get_pitch_dim(pianoroll)
     rp = np.zeros((T_pr, N_pr), dtype=np.int16)
     for k, v in pianoroll.items():
-        # if 'piano' in k.lower():
-        if not 'drum' in k.lower():
-            rp = np.maximum(rp, v)
+        # if 'piano' in k. /lower():
+        # if not 'drum' in k.lower():
+        rp = np.maximum(rp, v)
             
     return rp
